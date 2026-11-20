@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{TITLE}} · 公众号预览</title>
+  <style>
+    :root{color-scheme:light}
+    *{box-sizing:border-box}
+    body{margin:0;background:#f7f5fc;color:#151226;font:16px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+    .preview{max-width:450px;margin:24px auto 48px;background:white;border:1px solid #e0d9ee;border-radius:15px;box-shadow:0 14px 40px #4d33720b}
+    .toolbar{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;background:#fcfbfe;border-bottom:1px solid #e6e0f0;border-radius:14px 14px 0 0}
+    .toolbar-label{font-size:13px;font-weight:700;color:#625d72;white-space:nowrap}
+    .actions{display:flex;gap:6px}
+    button{min-height:40px;padding:6px 10px;border:1px solid #e0d3ef;border-radius:7px;background:#fff;color:#5725a3;font:inherit;font-size:13px;font-weight:650;white-space:nowrap;cursor:pointer}
+    button:hover{background:#f1ebfc}
+    button:focus-visible{outline:2px solid #7c3aed;outline-offset:2px}
+    .primary{border-color:#6631b6;background:#6631b6;color:white}
+    .primary:hover{background:#55289a}
+    .notes,.status{font-size:13px;line-height:1.6;margin:0;padding:8px 13px;background:#f2ebfd;color:#50208c;border-bottom:1px solid #e6e0f0}
+    .reading{padding:25px 24px 34px}
+    .article-header h1{margin:0 0 9px;color:#151226;font-size:25px;font-weight:760;line-height:1.42;letter-spacing:-.022em;overflow-wrap:anywhere}
+    .article-header p{margin:0 0 21px;color:#746e81;font-size:13px;line-height:1.5}
+    .article-header h1:last-child{margin-bottom:21px}
+    @media(max-width:490px){
+      .preview{margin:0 auto;border:0;border-radius:0;box-shadow:none}
+      .toolbar{border-radius:0}
+      .reading{padding:19px 18px 26px}
+      .article-header h1{font-size:23px}
+    }
+  </style>
+</head>
+<body>
+  <main class="preview">
+    <header class="toolbar">
+      <span class="toolbar-label">手机预览</span>
+      <div class="actions">
+        {{TITLE_BUTTON}}
+        <button id="copy-body" class="primary" type="button">复制正文</button>
+      </div>
+    </header>
+    <p id="status" class="status" role="status" hidden></p>
+    {{NOTES}}
+    <article class="reading" aria-label="排版预览">
+      {{HEADER}}
+      <div id="article-body">{{ARTICLE}}</div>
+    </article>
+  </main>
+  <script>
+    const status = document.getElementById('status');
+
+    function selectContent(element) {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    function fallbackCopy(element, text, html) {
+      selectContent(element);
+      let copied = false;
+      function writeClipboard(event) {
+        if (!event.clipboardData) return;
+        event.clipboardData.setData('text/plain', text);
+        if (html) event.clipboardData.setData('text/html', html);
+        event.preventDefault();
+        copied = true;
+      }
+      document.addEventListener('copy', writeClipboard);
+      try {
+        document.execCommand('copy');
+      } catch {
+        return false;
+      } finally {
+        document.removeEventListener('copy', writeClipboard);
+      }
+      return copied;
+    }
+
+    async function copy(element, isBody) {
+      const text = element.innerText;
+      let html = '';
+      if (isBody) {
+        const clone = element.cloneNode(true);
+        for (const img of clone.querySelectorAll('img[src]')) {
+          img.setAttribute('src', new URL(img.getAttribute('src'), document.baseURI).href);
+        }
+        html = clone.innerHTML;
+      }
+      let copied = false;
+      try {
+        if (isBody) {
+          await navigator.clipboard.write([new ClipboardItem({
+            'text/html': new Blob([html], {type: 'text/html'}),
+            'text/plain': new Blob([text], {type: 'text/plain'})
+          })]);
+        } else {
+          await navigator.clipboard.writeText(text);
+        }
+        copied = true;
+      } catch {
+        copied = fallbackCopy(element, text, html);
+      }
+      if (copied) window.getSelection()?.removeAllRanges();
+      const label = isBody ? '富文本正文' : '标题';
+      status.textContent = copied ? `已复制${label}，现在可在公众号编辑器粘贴。` : `已选中${label}，请按 ⌘C 或 Ctrl+C 复制。`;
+      status.hidden = false;
+    }
+
+    document.getElementById('copy-body').addEventListener('click', () => copy(document.getElementById('article-body'), true));
+    document.getElementById('copy-title')?.addEventListener('click', () => copy(document.getElementById('article-title'), false));
+  </script>
+</body>
+</html>

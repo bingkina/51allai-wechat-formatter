@@ -1,0 +1,4 @@
+interface:
+  display_name: "51AllAI 公众号排版"
+  short_description: "用 51AllAI 品牌紫排版 Markdown，一键复制正文到微信公众号编辑器"
+  default_prompt: "使用 $51allai-wechat-formatter 排版我粘贴的 Markdown，生成可复制到公众号编辑器的预览。"

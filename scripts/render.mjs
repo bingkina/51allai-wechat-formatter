@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
+import {realpathSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
@@ -36,9 +37,15 @@ function syntaxHTML(code,language){
   return html;
 }
 
-export async function renderDocument(source,{baseDir=process.cwd(),outputDir,filename=''}={}){
+const hashtagPattern = /^#[\p{L}\p{N}][\p{L}\p{M}\p{N}_.+#&-]*$/u;
+
+export async function renderDocument(source,{baseDir=process.cwd(),outputDir,filename='',tags=''}={}){
   if(!outputDir)throw Error('必须指定 outputDir');
   if(!source.trim())throw Error('请提供 Markdown 正文');
+  let hashtags = tags.trim().split(/\s+/).filter(Boolean);
+  if (hashtags.some(tag => !hashtagPattern.test(tag))) {
+    throw Error('请按 #标签1 #标签2 的格式传入文末标签');
+  }
   outputDir=path.resolve(outputDir);baseDir=path.resolve(baseDir);
   await fs.mkdir(outputDir,{recursive:true});
   const report={sourceSha256:digest(source),warnings:[],images:[],inventory:[],coverage:{},checks:{}};
@@ -70,6 +77,18 @@ export async function renderDocument(source,{baseDir=process.cwd(),outputDir,fil
   }
 
   const tokens=md.parse(body,env).filter(t=>t.type!=='html_block'||!/^<!--\s*more\s*-->\s*$/i.test(t.content));
+  if (hashtags.length) {
+    const footnotesAt = tokens.findIndex(token => token.type === 'footnote_block_open');
+    const end = footnotesAt === -1 ? tokens.length : footnotesAt;
+    const [open, inline] = tokens.slice(Math.max(0, end - 3), end);
+    if (open?.type === 'paragraph_open' && open.level === 0 && inline?.type === 'inline') {
+      const existing = inline.content.trim().split(/\s+/).map(tag => tag.replace(/^\\#/, '#'));
+      if (existing.every(tag => hashtagPattern.test(tag))) {
+        hashtags = existing.concat(hashtags);
+        tokens.splice(end - 3, 3);
+      }
+    }
+  }
   const emptyParagraphs=new Set();
   for(const token of tokens){
     if(token.type!=='inline')continue;
@@ -313,6 +332,16 @@ export async function renderDocument(source,{baseDir=process.cwd(),outputDir,fil
   }
   let rendered=md.renderer.render(tokens,md.options,env);
   if(structuredSources.length)rendered+=sourcesHTML(structuredSources);
+  if (hashtags.length) {
+    const seen = new Set();
+    const unique = hashtags.filter(tag => {
+      const key = tag.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    rendered += wrap('p', S.p, leaf(unique.join(' ')));
+  }
   const article=wrap('section',S.root,(tokens[0]?.meta?.summary?'':leadCover)+rendered);
   report.images.sort((a,b)=>(a.nodeId||Infinity)-(b.nodeId||Infinity)).forEach((im,i)=>im.id=i+1);
   report.coverage={expected:report.inventory.length,rendered:env.rendered.size,missing:report.inventory.filter(n=>!env.rendered.has(n.id))};
@@ -367,13 +396,15 @@ export function validateArticle(html){
 
 async function main(){
   const args=process.argv.slice(2);
-  if(args.includes('--help')||!args.length){console.log('用法：node scripts/render.mjs <文件.md|-> --out-dir <目录> [--title <名称>]\n文本通过标准输入时使用 -；图片相对于输入文件目录（标准输入相对于工作目录）。');return;}
-  const input=args[0],out=args.indexOf('--out-dir'),titleAt=args.indexOf('--title');
+  if(args.includes('--help')||!args.length){console.log('用法：node scripts/render.mjs <文件.md|-> --out-dir <目录> [--title <名称>] [--tags "#标签1 #标签2"]\n文本通过标准输入时使用 -；图片相对于输入文件目录（标准输入相对于工作目录）。');return;}
+  const input=args[0],out=args.indexOf('--out-dir'),titleAt=args.indexOf('--title'),tagsAt=args.indexOf('--tags');
   if(out<0||!args[out+1])throw Error('请使用 --out-dir 指定输出目录');
+  if(tagsAt>=0&&!args[tagsAt+1]?.trim())throw Error('请在 --tags 后提供文末标签');
   const outputDir=path.resolve(args[out+1]);
   const src=input==='-'?await new Promise((resolve,reject)=>{let s='';process.stdin.setEncoding('utf8');process.stdin.on('data',v=>s+=v);process.stdin.on('end',()=>resolve(s));process.stdin.on('error',reject);}):await fs.readFile(path.resolve(input),'utf8');
   const filename=titleAt>=0?args[titleAt+1]:'';
-  const result=await renderDocument(src,{baseDir:input==='-'?process.cwd():path.dirname(path.resolve(input)),outputDir,filename});
+  const tags=tagsAt>=0?args[tagsAt+1]:'';
+  const result=await renderDocument(src,{baseDir:input==='-'?process.cwd():path.dirname(path.resolve(input)),outputDir,filename,tags});
   const {complete,coverage,images,warnings,checks}=result.report;
   console.log(JSON.stringify({
     files:result.files,title:result.title,complete,coverage,
@@ -383,4 +414,13 @@ async function main(){
   },null,2));
   if(!result.report.complete)process.exitCode=1;
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(e=>{console.error(e.message);process.exitCode=1;});
+function isCliEntry() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isCliEntry()) main().catch(error => { console.error(error.message); process.exitCode = 1; });

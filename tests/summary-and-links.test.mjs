@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -47,4 +47,25 @@ test('links become plain labels; bare addresses and generated link lists disappe
   assert.match(htmlText(article), /开发指南。更新日志。\s*HTML 说明/);
   assert.match(htmlText(article), /https:\/\/example\.com\/api/);
   assert.match(htmlText(article), /官方文档 — 用于核对功能/);
+});
+
+test('article hashtags merge with the existing tag line and remain last in the copyable body', async t => {
+  const outputDir = await mkdtemp(path.join(os.tmpdir(), '51allai-tags-'));
+  t.after(() => rm(outputDir, { recursive: true, force: true }));
+  const source = [
+    '---', 'sources:', '  - name: 官方文档', '---',
+    '', '文章正文。[^1]', '', '\\#AI编程 #GitHub', '', '[^1]: 注释正文。',
+  ].join('\n');
+  const { files, report } = await renderDocument(source, {
+    outputDir, tags: '#github  #GPT-6.2 #开发工具',
+  });
+  assert.equal(report.complete, true);
+  const preview = await readFile(files.preview, 'utf8');
+  const copyableBody = preview.match(/<div id="article-body">([\s\S]*?)<\/div>/)[1];
+  const root = parseFragment(copyableBody).childNodes[0];
+  const elements = root.childNodes.filter(node => node.tagName);
+  assert.equal(elements.at(-1).tagName, 'p');
+  const bodyText = htmlText(copyableBody).trim();
+  assert.match(bodyText, /注释正文。.*官方文档#AI编程 #GitHub #GPT-6\.2 #开发工具$/s);
+  assert.equal(bodyText.match(/#AI编程/g).length, 1);
 });
